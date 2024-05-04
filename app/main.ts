@@ -1,7 +1,10 @@
-import * as net from "net";
+import * as net from "node:net";
 
 const server = net.createServer((socket) => {
-  socket.end();
+  socket.on("data", () => {
+    socket.write("HTTP/1.1 200 OK\r\n\r\n");
+    socket.end();
+  });
 });
 
 // You can use print statements as follows for debugging, they'll be visible when running tests.
