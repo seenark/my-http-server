@@ -2,12 +2,52 @@ import * as net from "node:net";
 
 console.clear();
 
+const extractMethodAndPath = (text: string) => {
+  const [firstline] = text.split("\r\n");
+  const [method, path, httpVersion] = firstline.split(" ");
+  return {
+    method,
+    path,
+    httpVersion,
+  } as const;
+};
+
+const parseHeader = (text: string) => {
+  const [_firstline, ...rest] = text.split("\r\n");
+  const restObj = rest
+    .filter((pair) => !!pair[0])
+    .reduce(
+      (acc, cur) => {
+        const [key, value] = cur.split(":");
+        acc[key.trim()] = value.trim();
+        return acc;
+      },
+      {} as Record<"User-Agent" | "Accept" | "Host" | (string & {}), string>,
+    );
+
+  return {
+    ...restObj,
+    ...extractMethodAndPath(text),
+  };
+};
+
+const createResponseBody = (args: {
+  httpVersion: string;
+  statusText: string;
+  statusCode: number;
+  "Content-Type": "text/plain";
+  body: string;
+}) => {
+  const { body, httpVersion, statusText, statusCode } = args;
+  return `${httpVersion} ${statusCode} ${statusText}\r\nContent-Type: ${args["Content-Type"]}\r\nContent-Length: ${body.length}\r\n\n${body}`;
+};
+
 const server = net.createServer((socket) => {
   socket.on("data", (data) => {
     const rcvdData = data.toString();
-    console.log("rcvd", rcvdData);
-    const [firstline] = rcvdData.split("\r\n");
-    const [tethod, path, httpVersion] = firstline.split(" ");
+    const headers = parseHeader(rcvdData);
+    console.log("headers", headers);
+    const { path, httpVersion } = headers;
     if (path === "/") {
       console.log("path", path);
       socket.write("HTTP/1.1 200 OK\r\n\r\n");
@@ -26,6 +66,17 @@ const server = net.createServer((socket) => {
       console.log("responseStr", responseStr);
       socket.write(`${responseStr}\r\n\r\n`);
       return;
+    }
+    if (path === "/user-agent") {
+      const content = createResponseBody({
+        httpVersion,
+        statusCode: 200,
+        statusText: "OK",
+        "Content-Type": "text/plain",
+        body: headers["User-Agent"],
+      });
+      console.log("content", content);
+      socket.write(`${content}\r\n\r\n`);
     }
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
   });
