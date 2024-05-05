@@ -1,4 +1,6 @@
 import * as net from "node:net";
+import * as fs from "node:fs/promises";
+import { join } from "node:path";
 
 console.clear();
 
@@ -35,15 +37,21 @@ const createResponseBody = (args: {
   httpVersion: string;
   statusText: string;
   statusCode: number;
-  "Content-Type": "text/plain";
+  "Content-Type": "text/plain" | "application/octet-stream";
   body: string;
 }) => {
   const { body, httpVersion, statusText, statusCode } = args;
-  return `${httpVersion} ${statusCode} ${statusText}\r\nContent-Type: ${args["Content-Type"]}\r\nContent-Length: ${body.length}\r\n\n${body}`;
+  return `${httpVersion} ${statusCode} ${statusText}\r\nContent-Type: ${args["Content-Type"]}\r\nContent-Length: ${body.length}\r\n\r\n${body}`;
+};
+
+const getFolderNameFromCliDirectory = (): string => {
+  const dirIndex = process.argv.findIndex((arg) => arg === "--directory");
+  if (dirIndex === undefined) return "";
+  return process.argv[dirIndex + 1];
 };
 
 const server = net.createServer((socket) => {
-  socket.on("data", (data) => {
+  socket.on("data", async (data) => {
     const rcvdData = data.toString();
     const headers = parseHeader(rcvdData);
     console.log("headers", headers);
@@ -67,6 +75,37 @@ const server = net.createServer((socket) => {
       socket.write(`${responseStr}\r\n\r\n`);
       return;
     }
+    if (path.includes("/files/")) {
+      const fileName = path.replace("/files/", "");
+      console.log("file name", fileName);
+      const args = process.argv;
+      console.log("args", args);
+      const folderName = getFolderNameFromCliDirectory();
+      const fileFullPath = join(folderName, fileName);
+      console.log("file full path", fileFullPath);
+      try {
+        const fileContent = await fs.readFile(fileFullPath, "utf-8");
+
+        const content = createResponseBody({
+          httpVersion,
+          statusCode: 200,
+          statusText: "OK",
+          "Content-Type": "application/octet-stream",
+          body: fileContent,
+        });
+        socket.write(`${content}\r\n\r\n`);
+      } catch (error) {
+        const content = createResponseBody({
+          httpVersion,
+          statusCode: 404,
+          statusText: "Not Found",
+          "Content-Type": "application/octet-stream",
+          body: "",
+        });
+        socket.write(`${content}\r\n\r\n`);
+      }
+      return;
+    }
     if (path === "/user-agent") {
       const content = createResponseBody({
         httpVersion,
@@ -77,6 +116,7 @@ const server = net.createServer((socket) => {
       });
       console.log("content", content);
       socket.write(`${content}\r\n\r\n`);
+      return;
     }
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
   });
