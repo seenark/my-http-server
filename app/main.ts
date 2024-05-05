@@ -15,8 +15,12 @@ const extractMethodAndPath = (text: string) => {
 };
 
 const parseHeader = (text: string) => {
-  const [_firstline, ...rest] = text.split("\r\n");
-  const restObj = rest
+  const rawSplited = text.split("\r\n");
+  const separationIndex = rawSplited.findIndex((data) => data === "");
+  const headerSection = rawSplited.slice(1, separationIndex);
+  const body = rawSplited.slice(separationIndex + 1);
+  console.log({ headerSection, body });
+  const headerObj = headerSection
     .filter((pair) => !!pair[0])
     .reduce(
       (acc, cur) => {
@@ -28,8 +32,9 @@ const parseHeader = (text: string) => {
     );
 
   return {
-    ...restObj,
+    ...headerObj,
     ...extractMethodAndPath(text),
+    body: body.join("\r\n"),
   };
 };
 
@@ -53,9 +58,10 @@ const getFolderNameFromCliDirectory = (): string => {
 const server = net.createServer((socket) => {
   socket.on("data", async (data) => {
     const rcvdData = data.toString();
-    const headers = parseHeader(rcvdData);
-    console.log("headers", headers);
-    const { path, httpVersion } = headers;
+    console.log("rcvdData", rcvdData);
+    const req = parseHeader(rcvdData);
+    console.log("req", req);
+    const { path, httpVersion, method } = req;
     if (path === "/") {
       console.log("path", path);
       socket.write("HTTP/1.1 200 OK\r\n\r\n");
@@ -75,14 +81,25 @@ const server = net.createServer((socket) => {
       socket.write(`${responseStr}\r\n\r\n`);
       return;
     }
-    if (path.includes("/files/")) {
+
+    if (path === "/user-agent") {
+      const content = createResponseBody({
+        httpVersion,
+        statusCode: 200,
+        statusText: "OK",
+        "Content-Type": "text/plain",
+        body: req["User-Agent"],
+      });
+      console.log("content", content);
+      socket.write(`${content}\r\n\r\n`);
+      socket.end();
+      return;
+    }
+
+    if (method === "GET" && path.includes("/files/")) {
       const fileName = path.replace("/files/", "");
-      console.log("file name", fileName);
-      const args = process.argv;
-      console.log("args", args);
       const folderName = getFolderNameFromCliDirectory();
       const fileFullPath = join(folderName, fileName);
-      console.log("file full path", fileFullPath);
       try {
         const fileContent = await fs.readFile(fileFullPath, "utf-8");
 
@@ -104,21 +121,32 @@ const server = net.createServer((socket) => {
         });
         socket.write(`${content}\r\n\r\n`);
       }
+      socket.end();
       return;
     }
-    if (path === "/user-agent") {
-      const content = createResponseBody({
-        httpVersion,
-        statusCode: 200,
-        statusText: "OK",
-        "Content-Type": "text/plain",
-        body: headers["User-Agent"],
-      });
-      console.log("content", content);
-      socket.write(`${content}\r\n\r\n`);
+    if (method === "POST" && path.includes("/files/")) {
+      const fileName = path.replace("/files/", "");
+      const folderName = getFolderNameFromCliDirectory();
+      const fileFullPath = join(folderName, fileName);
+      try {
+        await fs.writeFile(fileFullPath, req.body, { encoding: "utf-8" });
+        socket.write("HTTP/1.1 201 Created \r\n\r\n");
+      } catch (error) {
+        socket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+      }
+      socket.end();
       return;
     }
+
+    if (path.includes("/files/")) {
+      socket.write("HTTP/1.1 405 Method Not Allowed\r\n\r\n");
+    }
+
+    console.log("req", req);
+
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+    socket.end();
+    return;
   });
 });
 
